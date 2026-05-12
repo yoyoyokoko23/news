@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import email.utils
+import hashlib
 import html
 import os
 import re
@@ -206,7 +207,10 @@ def clean_text(value: str) -> str:
 
 
 def slugify_category(category: str) -> str:
-    return quote_plus(category)
+    if category in CATEGORY_ORDER:
+        return f"category-{CATEGORY_ORDER.index(category) + 1}"
+    digest = hashlib.sha1(category.encode("utf-8")).hexdigest()[:8]
+    return f"category-extra-{digest}"
 
 
 def article_text(article: Article) -> str:
@@ -545,7 +549,8 @@ def build_article_sections(articles: list[Article]) -> str:
             )
         sections.append(
             f"""
-<h2 id="{category_id}" style="background:{style['color']};color:#fff;border-radius:10px;padding:10px 14px;margin-top:26px;">{html.escape(category)}</h2>
+<a id="{category_id}" name="{category_id}" style="display:block;"></a>
+<h2 style="background:{style['color']};color:#fff;border-radius:10px;padding:10px 14px;margin-top:26px;">{html.escape(category)}</h2>
 {''.join(cards)}
 """.strip()
         )
