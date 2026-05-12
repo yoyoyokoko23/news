@@ -59,6 +59,23 @@ MARKET_SYMBOLS = {
     "黄金期货": "GC=F",
 }
 
+PRIORITY_RSS_FEEDS = {
+    "虎嗅": "https://www.huxiu.com/rss/0.xml",
+}
+
+PRIORITY_SITE_QUERIES = [
+    (
+        "华尔街见闻",
+        "重点来源-华尔街见闻",
+        "site:wallstreetcn.com 科创50 OR 纳斯达克 OR 中证500 OR 沪深300 OR 人工智能 OR 黄金",
+    ),
+    (
+        "虎嗅",
+        "重点来源-虎嗅",
+        "site:huxiu.com 人工智能 OR AI OR 科技 OR 投资",
+    ),
+]
+
 
 @dataclass(frozen=True)
 class Article:
@@ -140,11 +157,87 @@ def fetch_topic_articles(topic: str, queries: Iterable[str], limit_per_topic: in
     return articles
 
 
+def article_from_feed_entry(topic: str, source: str, entry: object) -> Article | None:
+    title = clean_text(getattr(entry, "title", ""))
+    link = getattr(entry, "link", "")
+    if not title or not link:
+        return None
+
+    return Article(
+        topic=topic,
+        title=title,
+        link=link,
+        source=source,
+        published=parse_published(entry),
+        summary=clean_text(getattr(entry, "summary", "")),
+    )
+
+
+def fetch_feed_articles(source: str, url: str, limit: int) -> list[Article]:
+    response = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=20)
+    response.raise_for_status()
+    feed = feedparser.parse(response.content)
+    articles: list[Article] = []
+    for entry in feed.entries[:limit]:
+        article = article_from_feed_entry(f"重点来源-{source}", source, entry)
+        if article:
+            articles.append(article)
+    return articles
+
+
+def fetch_priority_articles(limit_per_source: int) -> list[Article]:
+    articles: list[Article] = []
+
+    for source, url in PRIORITY_RSS_FEEDS.items():
+        try:
+            articles.extend(fetch_feed_articles(source, url, limit_per_source))
+        except Exception as exc:
+            print(f"Warning: failed to fetch {source} RSS: {exc}", file=sys.stderr)
+
+    for source, topic, query in PRIORITY_SITE_QUERIES:
+        try:
+            source_articles = fetch_topic_articles(topic, [query], limit_per_source)
+            articles.extend(
+                Article(
+                    topic=article.topic,
+                    title=article.title,
+                    link=article.link,
+                    source=source if article.source == "Google News" else article.source,
+                    published=article.published,
+                    summary=article.summary,
+                )
+                for article in source_articles
+            )
+        except Exception as exc:
+            print(f"Warning: failed to fetch {source} site news: {exc}", file=sys.stderr)
+
+    return articles
+
+
+def dedupe_articles(articles: list[Article]) -> list[Article]:
+    deduped: list[Article] = []
+    seen_links: set[str] = set()
+    seen_titles: set[str] = set()
+
+    for article in articles:
+        normalized_title = article.title.lower()
+        if article.link in seen_links or normalized_title in seen_titles:
+            continue
+        deduped.append(article)
+        seen_links.add(article.link)
+        seen_titles.add(normalized_title)
+
+    return deduped
+
+
 def fetch_articles(limit_per_topic: int) -> list[Article]:
     all_articles: list[Article] = []
+    priority_limit = int(os.getenv("PRIORITY_ARTICLES_PER_SOURCE", "6"))
+    all_articles.extend(fetch_priority_articles(priority_limit))
+
     for topic, queries in DEFAULT_TOPICS.items():
         all_articles.extend(fetch_topic_articles(topic, queries, limit_per_topic))
-    return all_articles
+    return dedupe_articles(all_articles)
 
 
 def fetch_market_snapshot() -> list[dict[str, str]]:
