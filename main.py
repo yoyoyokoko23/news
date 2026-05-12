@@ -5,6 +5,7 @@ import datetime as dt
 import email.utils
 import html
 import os
+import re
 import smtplib
 import sys
 from collections import defaultdict
@@ -145,6 +146,20 @@ CATEGORY_ORDER = [
     "黄金",
 ]
 
+CATEGORY_STYLES = {
+    "重点来源-华尔街见闻": {"color": "#7c2d12", "background": "#fff7ed"},
+    "重点来源-虎嗅": {"color": "#9a3412", "background": "#fffbeb"},
+    "政策与地缘-美伊关系": {"color": "#991b1b", "background": "#fef2f2"},
+    "政策与产业-半导体": {"color": "#1d4ed8", "background": "#eff6ff"},
+    "政策与产业-AI": {"color": "#6d28d9", "background": "#f5f3ff"},
+    "中国科创50": {"color": "#047857", "background": "#ecfdf5"},
+    "沪深300": {"color": "#0369a1", "background": "#f0f9ff"},
+    "中证500": {"color": "#0f766e", "background": "#f0fdfa"},
+    "纳斯达克指数": {"color": "#4338ca", "background": "#eef2ff"},
+    "人工智能": {"color": "#7e22ce", "background": "#faf5ff"},
+    "黄金": {"color": "#a16207", "background": "#fefce8"},
+}
+
 
 @dataclass(frozen=True)
 class Article:
@@ -186,7 +201,12 @@ def parse_published(entry: object) -> str:
 
 
 def clean_text(value: str) -> str:
-    return " ".join(html.unescape(value or "").split())
+    without_tags = re.sub(r"<[^>]+>", " ", value or "")
+    return " ".join(html.unescape(without_tags).split())
+
+
+def slugify_category(category: str) -> str:
+    return quote_plus(category)
 
 
 def article_text(article: Article) -> str:
@@ -490,14 +510,32 @@ def grouped_articles(articles: list[Article]) -> dict[str, list[Article]]:
     return ordered
 
 
+def category_style(category: str) -> dict[str, str]:
+    return CATEGORY_STYLES.get(category, {"color": "#374151", "background": "#f9fafb"})
+
+
+def build_category_nav(articles: list[Article]) -> str:
+    buttons = []
+    for category in grouped_articles(articles):
+        style = category_style(category)
+        buttons.append(
+            f"""
+<a href="#{slugify_category(category)}" style="display:inline-block;margin:0 8px 8px 0;padding:8px 12px;border-radius:999px;background:{style['background']};color:{style['color']};border:1px solid {style['color']};text-decoration:none;font-size:13px;font-weight:600;">{html.escape(category)}</a>
+""".strip()
+        )
+    return "\n".join(buttons)
+
+
 def build_article_sections(articles: list[Article]) -> str:
     sections: list[str] = []
     for category, category_articles in grouped_articles(articles).items():
+        style = category_style(category)
+        category_id = slugify_category(category)
         cards: list[str] = []
         for article in category_articles:
             cards.append(
                 f"""
-<div style="border:1px solid #e5e7eb;border-radius:10px;padding:14px 16px;margin:10px 0;background:#fff;">
+<div style="border:1px solid {style['color']};border-left:6px solid {style['color']};border-radius:10px;padding:14px 16px;margin:10px 0;background:{style['background']};">
   <p style="margin:0 0 6px 0;color:#555;font-size:13px;">{html.escape(article.source)} · {html.escape(article.published or "时间未知")}</p>
   <h3 style="margin:0 0 8px 0;font-size:16px;line-height:1.35;">{html.escape(article.title)}</h3>
   <p style="margin:0 0 10px 0;color:#333;">{html.escape(summarize_article_text(article))}</p>
@@ -507,7 +545,7 @@ def build_article_sections(articles: list[Article]) -> str:
             )
         sections.append(
             f"""
-<h2 style="border-bottom:2px solid #111;padding-bottom:6px;margin-top:24px;">{html.escape(category)}</h2>
+<h2 id="{category_id}" style="background:{style['color']};color:#fff;border-radius:10px;padding:10px 14px;margin-top:26px;">{html.escape(category)}</h2>
 {''.join(cards)}
 """.strip()
         )
@@ -515,6 +553,7 @@ def build_article_sections(articles: list[Article]) -> str:
 
 
 def build_email_html(ai_summary: str, articles: list[Article]) -> str:
+    category_nav = build_category_nav(articles)
     article_sections = build_article_sections(articles)
     generated_at = dt.datetime.now(ZoneInfo(os.getenv("DIGEST_TIMEZONE", "America/Los_Angeles")))
     return f"""
@@ -522,10 +561,14 @@ def build_email_html(ai_summary: str, articles: list[Article]) -> str:
   <div style="max-width:760px;margin:0 auto;background:#ffffff;border-radius:14px;padding:22px;">
   <h1 style="margin:0 0 8px 0;font-size:24px;">每日财经新闻摘要</h1>
   <p style="color:#666;">生成时间：{generated_at.strftime("%Y-%m-%d %H:%M %Z")}</p>
+  <div style="margin:16px 0 20px 0;padding:14px;border-radius:12px;background:#f3f4f6;">
+    <p style="margin:0 0 10px 0;color:#374151;font-weight:700;">分类筛选 / 快速跳转</p>
+    {category_nav}
+  </div>
   {ai_summary}
   <hr>
-  <h2>分类文章</h2>
-  <p style="color:#666;">以下文章已按主题归类，并优先保留摘要更完整、分析性更强的内容。</p>
+  <h2>新闻素材与原文链接</h2>
+  <p style="color:#666;">以下新闻素材放在邮件最后，按主题归类，并优先保留摘要更完整、分析性更强的内容。</p>
   {article_sections}
   <p style="color:#777;font-size:12px;">本邮件由自动化脚本生成，仅供信息整理，不构成投资建议。</p>
   </div>
