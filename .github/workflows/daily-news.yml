@@ -31,9 +31,9 @@ jobs:
 
       - name: Send daily digest
         env:
-          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_USER: ${{ secrets.GMAIL_USER || 'yokopenn235@gmail.com' }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
-          TO_EMAIL: ${{ secrets.TO_EMAIL }}
+          TO_EMAIL: ${{ secrets.TO_EMAIL || 'yokopenn235@gmail.com' }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_MODEL: ${{ vars.OPENAI_MODEL || 'gpt-4o-mini' }}
           DIGEST_TIMEZONE: ${{ vars.DIGEST_TIMEZONE || 'America/Los_Angeles' }}
