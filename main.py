@@ -550,6 +550,7 @@ def summarize_with_ai(source_digest: str) -> str:
 7. 按“今日重点”“市场指数”“政策与地缘”“半导体与AI政策”“人工智能”“黄金与宏观”“风险提示”组织。
 8. 每个分类下尽量包含：文章标题、主要内容、为什么重要、原文链接。
 9. 输出 HTML 片段，使用 h2/h3/ul/li/p/a，不要包含完整 html/body 标签。
+10. **严禁**在输出中逐条复述下方「新闻素材」的原文清单；不要使用与素材稿相同的「来源：」「时间：」「主要内容：」「链接：」这种逐条罗列格式。只写归纳后的要点与分析，必要时用少量 `<a>` 指向重点原文即可。完整逐条链接由邮件后方的固定排版区域展示。
 
 新闻素材如下：
 {source_digest}
@@ -571,12 +572,11 @@ def summarize_with_ai(source_digest: str) -> str:
 
 
 def fallback_summary(source_digest: str, reason: str | None = None) -> str:
-    escaped = html.escape(source_digest)
-    message = reason or "未配置 OPENAI_API_KEY，因此本次只发送原始新闻素材，没有 AI 归纳分析。"
+    message = reason or "未配置 OPENAI_API_KEY，因此本次没有 AI 归纳分析。"
     return (
-        "<h2>今日财经新闻素材</h2>"
+        "<h2>今日财经简报</h2>"
         f"<p>{html.escape(message)}</p>"
-        f"<pre style=\"white-space: pre-wrap; font-family: sans-serif;\">{escaped}</pre>"
+        "<p style=\"color:#666;\">逐条新闻素材已统一放在本邮件最底部的「原始素材清单」区块，请向下滚动查看。</p>"
     )
 
 
@@ -637,9 +637,21 @@ def build_article_sections(articles: list[Article]) -> str:
     return "\n".join(sections)
 
 
-def build_email_html(ai_summary: str, articles: list[Article]) -> str:
+def build_secondary_digest_html(source_digest: str) -> str:
+    escaped = html.escape(source_digest)
+    return f"""
+<section style="margin-top:28px;padding:16px 18px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:12px;">
+  <h2 style="margin:0 0 6px 0;font-size:16px;color:#6b7280;font-weight:700;">原始素材清单（备查）</h2>
+  <p style="margin:0 0 14px 0;font-size:13px;color:#9ca3af;line-height:1.5;">以下为机器整理的完整逐条记录（含行情快照与链接），便于检索与比对；上方彩色卡片为主要阅读区。</p>
+  <pre style="white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size:12px; color:#4b5563; margin:0;line-height:1.45;">{escaped}</pre>
+</section>
+""".strip()
+
+
+def build_email_html(ai_summary: str, articles: list[Article], source_digest: str) -> str:
     category_nav = build_category_nav(articles)
     article_sections = build_article_sections(articles)
+    secondary_digest = build_secondary_digest_html(source_digest)
     generated_at = dt.datetime.now(ZoneInfo(os.getenv("DIGEST_TIMEZONE", "America/Los_Angeles")))
     return f"""
 <div style="font-family: -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif; line-height: 1.55; color: #111; background:#f8fafc; padding:20px;">
@@ -653,8 +665,9 @@ def build_email_html(ai_summary: str, articles: list[Article]) -> str:
   {ai_summary}
   <hr>
   <h2>新闻素材与原文链接</h2>
-  <p style="color:#666;">以下新闻素材放在邮件最后，按主题归类，并优先保留摘要更完整、分析性更强的内容。</p>
+  <p style="color:#666;">以下为按主题归类的重点卡片（优先摘要更完整、分析性更强的条目）。完整逐条素材清单在<strong>本邮件最底部</strong>灰色「原始素材清单」区块。</p>
   {article_sections}
+  {secondary_digest}
   <p style="color:#777;font-size:12px;">本邮件由自动化脚本生成，仅供信息整理，不构成投资建议。</p>
   </div>
 </div>
@@ -704,7 +717,7 @@ def run(send_if_due: bool) -> None:
     timezone = ZoneInfo(os.getenv("DIGEST_TIMEZONE", "America/Los_Angeles"))
     today = dt.datetime.now(timezone).strftime("%Y-%m-%d")
     subject = f"每日财经新闻摘要 - {today}"
-    html_body = build_email_html(ai_summary, articles)
+    html_body = build_email_html(ai_summary, articles, source_digest)
     send_email(subject, html_body)
     telegram_sent = send_telegram_digest(
         date_label=today,
