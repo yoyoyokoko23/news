@@ -222,22 +222,27 @@ def summarize_with_ai(source_digest: str) -> str:
 {source_digest}
 """.strip()
 
-    response = client.chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": "你只根据用户提供的素材生成中文财经新闻摘要。"},
-            {"role": "user", "content": prompt},
-        ],
-        temperature=0.3,
-    )
-    return response.choices[0].message.content or fallback_summary(source_digest)
+    try:
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": "你只根据用户提供的素材生成中文财经新闻摘要。"},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.3,
+        )
+        return response.choices[0].message.content or fallback_summary(source_digest)
+    except Exception as exc:
+        print(f"Warning: AI summary failed, sending fallback digest: {exc}", file=sys.stderr)
+        return fallback_summary(source_digest, reason="AI 总结暂时失败，因此本次只发送原始新闻素材。")
 
 
-def fallback_summary(source_digest: str) -> str:
+def fallback_summary(source_digest: str, reason: str | None = None) -> str:
     escaped = html.escape(source_digest)
+    message = reason or "未配置 OPENAI_API_KEY，因此本次只发送原始新闻素材，没有 AI 归纳分析。"
     return (
         "<h2>今日财经新闻素材</h2>"
-        "<p>未配置 OPENAI_API_KEY，因此本次只发送原始新闻素材，没有 AI 归纳分析。</p>"
+        f"<p>{html.escape(message)}</p>"
         f"<pre style=\"white-space: pre-wrap; font-family: sans-serif;\">{escaped}</pre>"
     )
 
