@@ -7,6 +7,7 @@ import html
 import os
 import smtplib
 import sys
+from collections import defaultdict
 from dataclasses import dataclass
 from email.message import EmailMessage
 from typing import Iterable
@@ -67,13 +68,81 @@ PRIORITY_SITE_QUERIES = [
     (
         "华尔街见闻",
         "重点来源-华尔街见闻",
-        "site:wallstreetcn.com 科创50 OR 纳斯达克 OR 中证500 OR 沪深300 OR 人工智能 OR 黄金",
+        "site:wallstreetcn.com (深度 OR 解读 OR 分析 OR 复盘) (科创50 OR 纳斯达克 OR 中证500 OR 沪深300 OR 人工智能 OR 黄金)",
     ),
     (
         "虎嗅",
         "重点来源-虎嗅",
-        "site:huxiu.com 人工智能 OR AI OR 科技 OR 投资",
+        "site:huxiu.com (深度 OR 解读 OR 分析 OR 观察) (人工智能 OR AI OR 科技 OR 投资)",
     ),
+]
+
+POLICY_TOPICS = {
+    "政策与地缘-美伊关系": [
+        "美伊关系 伊朗 美国 制裁 核谈判 中东 最新",
+        "US Iran relations sanctions nuclear talks Middle East",
+    ],
+    "政策与产业-半导体": [
+        "半导体 政策 出口管制 芯片 中国 美国 最新",
+        "semiconductor policy export controls chips China US",
+    ],
+    "政策与产业-AI": [
+        "人工智能 政策 监管 AI 法规 中国 美国 最新",
+        "AI regulation policy artificial intelligence China US",
+    ],
+}
+
+DEEP_ARTICLE_KEYWORDS = [
+    "深度",
+    "解读",
+    "分析",
+    "复盘",
+    "观察",
+    "拆解",
+    "专题",
+    "研报",
+    "长文",
+    "趋势",
+    "逻辑",
+    "为什么",
+    "影响",
+    "背后",
+    "政策",
+    "监管",
+    "制裁",
+    "出口管制",
+    "核谈判",
+    "法规",
+]
+
+SHALLOW_ARTICLE_KEYWORDS = [
+    "快讯",
+    "异动",
+    "早报",
+    "午报",
+    "收盘",
+    "开盘",
+    "涨幅",
+    "跌幅",
+    "拉升",
+    "跳水",
+    "一度",
+    "简讯",
+    "7x24",
+]
+
+CATEGORY_ORDER = [
+    "重点来源-华尔街见闻",
+    "重点来源-虎嗅",
+    "政策与地缘-美伊关系",
+    "政策与产业-半导体",
+    "政策与产业-AI",
+    "中国科创50",
+    "沪深300",
+    "中证500",
+    "纳斯达克指数",
+    "人工智能",
+    "黄金",
 ]
 
 
@@ -101,8 +170,8 @@ def should_send_now() -> bool:
     return now.hour == target_hour
 
 
-def google_news_rss_url(query: str, language: str = "zh-CN", region: str = "CN") -> str:
-    encoded_query = quote_plus(f"{query} when:2d")
+def google_news_rss_url(query: str, language: str = "zh-CN", region: str = "CN", days: int = 2) -> str:
+    encoded_query = quote_plus(f"{query} when:{days}d")
     return (
         "https://news.google.com/rss/search?"
         f"q={encoded_query}&hl={language}&gl={region}&ceid={region}:zh-Hans"
@@ -120,13 +189,57 @@ def clean_text(value: str) -> str:
     return " ".join(html.unescape(value or "").split())
 
 
-def fetch_topic_articles(topic: str, queries: Iterable[str], limit_per_topic: int) -> list[Article]:
+def article_text(article: Article) -> str:
+    return f"{article.title} {article.summary}"
+
+
+def summarize_article_text(article: Article, max_chars: int = 220) -> str:
+    summary = clean_text(article.summary)
+    if not summary:
+        return "暂无详细摘要，请点击原文查看。"
+    if len(summary) <= max_chars:
+        return summary
+    return summary[:max_chars].rstrip() + "..."
+
+
+def is_shallow_article(article: Article) -> bool:
+    if article.topic.startswith("政策与"):
+        return False
+
+    text = article_text(article)
+    summary_len = len(clean_text(article.summary))
+    title_len = len(clean_text(article.title))
+    has_shallow_signal = any(keyword in text for keyword in SHALLOW_ARTICLE_KEYWORDS)
+    has_deep_signal = any(keyword in text for keyword in DEEP_ARTICLE_KEYWORDS)
+
+    if has_deep_signal:
+        return False
+    if summary_len < 45 and title_len < 34:
+        return True
+    return has_shallow_signal and summary_len < 90
+
+
+def article_depth_score(article: Article) -> int:
+    text = article_text(article)
+    score = min(len(clean_text(article.summary)), 300)
+    score += sum(80 for keyword in DEEP_ARTICLE_KEYWORDS if keyword in text)
+    score -= sum(60 for keyword in SHALLOW_ARTICLE_KEYWORDS if keyword in text)
+    if article.topic.startswith("重点来源"):
+        score += 80
+    if article.topic.startswith("政策与"):
+        score += 90
+    if article.source in {"华尔街见闻", "虎嗅"}:
+        score += 50
+    return score
+
+
+def fetch_topic_articles(topic: str, queries: Iterable[str], limit_per_topic: int, days: int = 2) -> list[Article]:
     articles: list[Article] = []
     seen_links: set[str] = set()
 
     for query in queries:
-        feed = feedparser.parse(google_news_rss_url(query))
-        for entry in feed.entries[:8]:
+        feed = feedparser.parse(google_news_rss_url(query, days=days))
+        for entry in feed.entries[:12]:
             title = clean_text(getattr(entry, "title", ""))
             link = getattr(entry, "link", "")
             if not title or not link or link in seen_links:
@@ -230,14 +343,34 @@ def dedupe_articles(articles: list[Article]) -> list[Article]:
     return deduped
 
 
+def rank_articles(articles: list[Article]) -> list[Article]:
+    keep = [article for article in articles if not is_shallow_article(article)]
+    if not keep:
+        keep = articles
+    return sorted(keep, key=article_depth_score, reverse=True)
+
+
+def fetch_policy_articles(limit_per_policy_topic: int) -> list[Article]:
+    articles: list[Article] = []
+    for topic, queries in POLICY_TOPICS.items():
+        try:
+            topic_articles = fetch_topic_articles(topic, queries, limit_per_policy_topic, days=1)
+            articles.extend(topic_articles[:limit_per_policy_topic])
+        except Exception as exc:
+            print(f"Warning: failed to fetch {topic} policy news: {exc}", file=sys.stderr)
+    return articles
+
+
 def fetch_articles(limit_per_topic: int) -> list[Article]:
     all_articles: list[Article] = []
     priority_limit = int(os.getenv("PRIORITY_ARTICLES_PER_SOURCE", "6"))
+    policy_limit = int(os.getenv("POLICY_ARTICLES_PER_TOPIC", "1"))
     all_articles.extend(fetch_priority_articles(priority_limit))
+    all_articles.extend(fetch_policy_articles(policy_limit))
 
     for topic, queries in DEFAULT_TOPICS.items():
         all_articles.extend(fetch_topic_articles(topic, queries, limit_per_topic))
-    return dedupe_articles(all_articles)
+    return rank_articles(dedupe_articles(all_articles))
 
 
 def fetch_market_snapshot() -> list[dict[str, str]]:
@@ -279,7 +412,7 @@ def build_source_digest(articles: list[Article], market_snapshot: list[dict[str,
         (
             f"- [{article.topic}] {article.title}\n"
             f"  来源: {article.source}; 时间: {article.published or '未知'}\n"
-            f"  摘要: {article.summary[:300]}\n"
+            f"  主要内容: {summarize_article_text(article, 360)}\n"
             f"  链接: {article.link}"
         )
         for article in articles
@@ -305,11 +438,14 @@ def summarize_with_ai(source_digest: str) -> str:
 
 请根据下面的新闻素材，生成一封中文财经日报。要求：
 1. 语言简单易懂，不要堆砌术语。
-2. 聚焦中国科创50、纳斯达克、中证500、沪深300、人工智能、黄金。
+2. 聚焦中国科创50、纳斯达克、中证500、沪深300、人工智能、黄金，以及美伊关系、半导体、AI政策监管。
 3. 区分“事实新闻”和“分析判断”，不要编造素材外的信息。
 4. 给出今日最值得关注的 3-5 个要点。
 5. 对风险因素做温和提醒，不构成投资建议。
-6. 输出 HTML 片段，使用 h2/h3/ul/li/p，不要包含完整 html/body 标签。
+6. 优先引用华尔街见闻、虎嗅等有分析价值的深度文章；少写只有一句标题的快讯。
+7. 按“今日重点”“市场指数”“政策与地缘”“半导体与AI政策”“人工智能”“黄金与宏观”“风险提示”组织。
+8. 每个分类下尽量包含：文章标题、主要内容、为什么重要、原文链接。
+9. 输出 HTML 片段，使用 h2/h3/ul/li/p/a，不要包含完整 html/body 标签。
 
 新闻素材如下：
 {source_digest}
@@ -340,22 +476,59 @@ def fallback_summary(source_digest: str, reason: str | None = None) -> str:
     )
 
 
+def grouped_articles(articles: list[Article]) -> dict[str, list[Article]]:
+    groups: dict[str, list[Article]] = defaultdict(list)
+    for article in articles:
+        groups[article.topic].append(article)
+
+    ordered: dict[str, list[Article]] = {}
+    for category in CATEGORY_ORDER:
+        if category in groups:
+            ordered[category] = groups.pop(category)
+    for category in sorted(groups):
+        ordered[category] = groups[category]
+    return ordered
+
+
+def build_article_sections(articles: list[Article]) -> str:
+    sections: list[str] = []
+    for category, category_articles in grouped_articles(articles).items():
+        cards: list[str] = []
+        for article in category_articles:
+            cards.append(
+                f"""
+<div style="border:1px solid #e5e7eb;border-radius:10px;padding:14px 16px;margin:10px 0;background:#fff;">
+  <p style="margin:0 0 6px 0;color:#555;font-size:13px;">{html.escape(article.source)} · {html.escape(article.published or "时间未知")}</p>
+  <h3 style="margin:0 0 8px 0;font-size:16px;line-height:1.35;">{html.escape(article.title)}</h3>
+  <p style="margin:0 0 10px 0;color:#333;">{html.escape(summarize_article_text(article))}</p>
+  <p style="margin:0;"><a href="{html.escape(article.link)}">阅读全文</a></p>
+</div>
+""".strip()
+            )
+        sections.append(
+            f"""
+<h2 style="border-bottom:2px solid #111;padding-bottom:6px;margin-top:24px;">{html.escape(category)}</h2>
+{''.join(cards)}
+""".strip()
+        )
+    return "\n".join(sections)
+
+
 def build_email_html(ai_summary: str, articles: list[Article]) -> str:
-    links = "\n".join(
-        f"<li><strong>{html.escape(article.topic)}</strong>: "
-        f"<a href=\"{html.escape(article.link)}\">{html.escape(article.title)}</a> "
-        f"<span style=\"color:#666;\">{html.escape(article.source)}</span></li>"
-        for article in articles
-    )
+    article_sections = build_article_sections(articles)
     generated_at = dt.datetime.now(ZoneInfo(os.getenv("DIGEST_TIMEZONE", "America/Los_Angeles")))
     return f"""
-<div style="font-family: -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif; line-height: 1.55; color: #111;">
+<div style="font-family: -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif; line-height: 1.55; color: #111; background:#f8fafc; padding:20px;">
+  <div style="max-width:760px;margin:0 auto;background:#ffffff;border-radius:14px;padding:22px;">
+  <h1 style="margin:0 0 8px 0;font-size:24px;">每日财经新闻摘要</h1>
   <p style="color:#666;">生成时间：{generated_at.strftime("%Y-%m-%d %H:%M %Z")}</p>
   {ai_summary}
   <hr>
-  <h2>参考链接</h2>
-  <ul>{links}</ul>
+  <h2>分类文章</h2>
+  <p style="color:#666;">以下文章已按主题归类，并优先保留摘要更完整、分析性更强的内容。</p>
+  {article_sections}
   <p style="color:#777;font-size:12px;">本邮件由自动化脚本生成，仅供信息整理，不构成投资建议。</p>
+  </div>
 </div>
 """.strip()
 

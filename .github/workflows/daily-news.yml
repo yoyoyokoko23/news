@@ -39,6 +39,8 @@ jobs:
           DIGEST_TIMEZONE: ${{ vars.DIGEST_TIMEZONE || 'America/Los_Angeles' }}
           DIGEST_HOUR: ${{ vars.DIGEST_HOUR || '11' }}
           ARTICLES_PER_TOPIC: ${{ vars.ARTICLES_PER_TOPIC || '5' }}
+          PRIORITY_ARTICLES_PER_SOURCE: ${{ vars.PRIORITY_ARTICLES_PER_SOURCE || '6' }}
+          POLICY_ARTICLES_PER_TOPIC: ${{ vars.POLICY_ARTICLES_PER_TOPIC || '1' }}
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.send_now }}" = "true" ]; then
             python main.py --send-now
