@@ -41,6 +41,9 @@ jobs:
           ARTICLES_PER_TOPIC: ${{ vars.ARTICLES_PER_TOPIC || '5' }}
           PRIORITY_ARTICLES_PER_SOURCE: ${{ vars.PRIORITY_ARTICLES_PER_SOURCE || '6' }}
           POLICY_ARTICLES_PER_TOPIC: ${{ vars.POLICY_ARTICLES_PER_TOPIC || '1' }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_AI_SUMMARY_MAX_CHARS: ${{ vars.TELEGRAM_AI_SUMMARY_MAX_CHARS }}
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.send_now }}" = "true" ]; then
             python main.py --send-now

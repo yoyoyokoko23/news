@@ -9,6 +9,7 @@ import os
 import re
 import smtplib
 import sys
+import time
 from collections import defaultdict
 from dataclasses import dataclass
 from email.message import EmailMessage
@@ -179,6 +180,81 @@ def env(name: str, default: str | None = None) -> str:
     return value
 
 
+def http_get(url: str, *, timeout: float = 20, headers: dict[str, str] | None = None) -> requests.Response:
+    merged_headers = {"User-Agent": "Mozilla/5.0 (compatible; DailyFinanceDigest/1.0)"}
+    if headers:
+        merged_headers.update(headers)
+    last_exc: Exception | None = None
+    for attempt in range(3):
+        try:
+            response = requests.get(url, headers=merged_headers, timeout=timeout)
+            response.raise_for_status()
+            return response
+        except Exception as exc:
+            last_exc = exc
+            time.sleep(0.8 * (attempt + 1))
+    assert last_exc is not None
+    raise last_exc
+
+
+def strip_html_to_plain(fragment: str) -> str:
+    without_tags = re.sub(r"<[^>]+>", " ", fragment or "")
+    return " ".join(html.unescape(without_tags).split())
+
+
+def send_telegram_digest(
+    *,
+    date_label: str,
+    market_snapshot: list[dict[str, str]],
+    ai_summary_html: str,
+    article_count: int,
+) -> bool:
+    token = (os.getenv("TELEGRAM_BOT_TOKEN") or "").strip()
+    chat_id = (os.getenv("TELEGRAM_CHAT_ID") or "").strip()
+    if not token or not chat_id:
+        return False
+
+    lines: list[str] = [f"📰 每日财经新闻摘要 · {date_label}", ""]
+    if market_snapshot:
+        lines.append("行情快照：")
+        for item in market_snapshot:
+            lines.append(f"· {item['name']}: {item['price']} ({item['change_percent']})")
+        lines.append("")
+    plain_ai = strip_html_to_plain(ai_summary_html)
+    raw_max = (os.getenv("TELEGRAM_AI_SUMMARY_MAX_CHARS") or "").strip()
+    try:
+        max_ai = int(raw_max) if raw_max else 3200
+    except ValueError:
+        max_ai = 3200
+    if len(plain_ai) > max_ai:
+        plain_ai = plain_ai[:max_ai].rstrip() + "…"
+    lines.append("AI 要点：")
+    lines.append(plain_ai or "（无）")
+    lines.append("")
+    lines.append(f"共 {article_count} 条新闻素材；完整排版与原文链接已发送至邮箱。")
+
+    text = "\n".join(lines)
+    if len(text) > 4096:
+        text = text[:4090] + "…"
+
+    api_url = f"https://api.telegram.org/bot{token}/sendMessage"
+    try:
+        response = requests.post(
+            api_url,
+            json={"chat_id": chat_id, "text": text, "disable_web_page_preview": True},
+            timeout=25,
+        )
+        response.raise_for_status()
+        data = response.json()
+        if not data.get("ok"):
+            print(f"Warning: Telegram API returned ok=false: {data}", file=sys.stderr)
+            return False
+        return True
+    except Exception as exc:
+        print(f"Warning: failed to send Telegram notification: {exc}", file=sys.stderr)
+        return False
+
+
 def should_send_now() -> bool:
     timezone = ZoneInfo(os.getenv("DIGEST_TIMEZONE", "America/Los_Angeles"))
     target_hour = int(os.getenv("DIGEST_HOUR", "11"))
@@ -262,7 +338,13 @@ def fetch_topic_articles(topic: str, queries: Iterable[str], limit_per_topic: in
     seen_links: set[str] = set()
 
     for query in queries:
-        feed = feedparser.parse(google_news_rss_url(query, days=days))
+        rss_url = google_news_rss_url(query, days=days)
+        try:
+            rss_body = http_get(rss_url, timeout=20).content
+        except Exception as exc:
+            print(f"Warning: failed to fetch Google News RSS for topic {topic!r}: {exc}", file=sys.stderr)
+            continue
+        feed = feedparser.parse(rss_body)
         for entry in feed.entries[:12]:
             title = clean_text(getattr(entry, "title", ""))
             link = getattr(entry, "link", "")
@@ -311,8 +393,7 @@ def article_from_feed_entry(topic: str, source: str, entry: object) -> Article |
 
 
 def fetch_feed_articles(source: str, url: str, limit: int) -> list[Article]:
-    response = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=20)
-    response.raise_for_status()
+    response = http_get(url, timeout=20, headers={"User-Agent": "Mozilla/5.0"})
     feed = feedparser.parse(response.content)
     articles: list[Article] = []
     for entry in feed.entries[:limit]:
@@ -401,8 +482,7 @@ def fetch_market_snapshot() -> list[dict[str, str]]:
     symbols = ",".join(MARKET_SYMBOLS.values())
     url = f"https://query1.finance.yahoo.com/v7/finance/quote?symbols={quote_plus(symbols)}"
     try:
-        response = requests.get(url, timeout=20)
-        response.raise_for_status()
+        response = http_get(url, timeout=20)
         results = response.json().get("quoteResponse", {}).get("result", [])
     except Exception as exc:
         print(f"Warning: failed to fetch market snapshot: {exc}", file=sys.stderr)
@@ -626,7 +706,17 @@ def run(send_if_due: bool) -> None:
     subject = f"每日财经新闻摘要 - {today}"
     html_body = build_email_html(ai_summary, articles)
     send_email(subject, html_body)
-    print(f"Sent digest email with {len(articles)} articles.")
+    telegram_sent = send_telegram_digest(
+        date_label=today,
+        market_snapshot=market_snapshot,
+        ai_summary_html=ai_summary,
+        article_count=len(articles),
+    )
+    print(f"Sent digest email with {len(articles)} articles.", end="")
+    if (os.getenv("TELEGRAM_BOT_TOKEN") or "").strip() and (os.getenv("TELEGRAM_CHAT_ID") or "").strip():
+        print(" Telegram 简报已发送。" if telegram_sent else " Telegram 未发送（见上方告警）。")
+    else:
+        print()
 
 
 def main() -> None:
