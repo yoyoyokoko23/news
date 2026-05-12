@@ -202,6 +202,52 @@ def strip_html_to_plain(fragment: str) -> str:
     return " ".join(html.unescape(without_tags).split())
 
 
+CLIPBOARD_FOLLOWUP_INSTRUCTION = """【接下来请你做的分析】
+请在我下面粘贴的「当日素材全文」基础上，用简单的语言说明当前市场与相关政策的趋势，并分析这些变化对我长期坚持定投（例如宽基指数基金、科创或行业主题等）可能有哪些影响。请注意：仅以教育和信息整理为目的，不构成任何投资建议；若存在多种可能，请分情形说明。
+
+=== 以下为当日素材全文（请连同本段说明一并复制到 ChatGPT、Cursor 等工具后继续提问）==="""
+
+
+def build_plain_text_for_clipboard(ai_summary_html: str, source_digest: str, generated_label: str) -> str:
+    plain_ai = strip_html_to_plain(ai_summary_html)
+    parts = [
+        CLIPBOARD_FOLLOWUP_INSTRUCTION,
+        "",
+        f"生成时间：{generated_label}",
+        "",
+        "--- AI 摘要（纯文本）---",
+        plain_ai if plain_ai else "（无）",
+        "",
+        "--- 行情与新闻素材（与邮件内清单一致）---",
+        source_digest,
+    ]
+    return "\n".join(parts)
+
+
+def build_copy_to_ai_strip_html() -> str:
+    return """
+<div style="margin:12px 0 18px 0;padding:14px 16px;border-radius:12px;border:1px solid #bfdbfe;background:#eff6ff;">
+  <p style="margin:0 0 8px 0;font-weight:700;color:#1e3a8a;font-size:15px;">复制全文：趋势说明 + 定投影响分析</p>
+  <p style="margin:0 0 12px 0;font-size:14px;color:#334155;line-height:1.55;">邮件里无法使用真正的「一键自动复制」（Gmail 等会屏蔽脚本）。请点击下方按钮跳到文末<strong>全文复制区</strong>：在灰色框内<strong>单击</strong>（手机可长按）尝试一次选中全部文字，再按 <strong>⌘C</strong> 或 <strong>Ctrl+C</strong> 复制，即可粘贴到 AI 工具。复制内容已自动附上「用简单语言说明趋势，并分析对定投的影响」的说明文字。</p>
+  <a href="#digest-clipboard-anchor" style="display:inline-block;padding:12px 22px;background:#2563eb;color:#ffffff !important;border-radius:10px;text-decoration:none;font-weight:700;font-size:15px;">跳转到全文复制区</a>
+</div>
+""".strip()
+
+
+def build_clipboard_region_html(plain_text: str) -> str:
+    escaped = html.escape(plain_text)
+    return f"""
+<a id="digest-clipboard-anchor" name="digest-clipboard-anchor" style="display:block;line-height:0;font-size:0;">&nbsp;</a>
+<section style="margin-top:28px;padding:18px;border-radius:12px;border:1px solid #cbd5e1;background:#f1f5f9;">
+  <h2 style="margin:0 0 8px 0;font-size:17px;color:#0f172a;">全文复制区</h2>
+  <p style="margin:0 0 14px 0;font-size:13px;color:#475569;line-height:1.55;">已包含给 AI 的定投分析提示与当日全部纯文本素材。若单击无法一次选中，请在框内三击或手动拖选全段后再复制。</p>
+  <div style="-webkit-user-select:all;-moz-user-select:all;-ms-user-select:all;user-select:all;border:1px solid #e2e8f0;border-radius:10px;background:#ffffff;padding:14px;max-height:520px;overflow:auto;">
+    <pre style="margin:0;white-space:pre-wrap;word-break:break-word;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;line-height:1.45;color:#1e293b;">{escaped}</pre>
+  </div>
+</section>
+""".strip()
+
+
 def send_telegram_digest(
     *,
     date_label: str,
@@ -653,11 +699,16 @@ def build_email_html(ai_summary: str, articles: list[Article], source_digest: st
     article_sections = build_article_sections(articles)
     secondary_digest = build_secondary_digest_html(source_digest)
     generated_at = dt.datetime.now(ZoneInfo(os.getenv("DIGEST_TIMEZONE", "America/Los_Angeles")))
+    generated_label = generated_at.strftime("%Y-%m-%d %H:%M %Z")
+    clipboard_plain = build_plain_text_for_clipboard(ai_summary, source_digest, generated_label)
+    copy_strip = build_copy_to_ai_strip_html()
+    clipboard_html = build_clipboard_region_html(clipboard_plain)
     return f"""
 <div style="font-family: -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif; line-height: 1.55; color: #111; background:#f8fafc; padding:20px;">
   <div style="max-width:760px;margin:0 auto;background:#ffffff;border-radius:14px;padding:22px;">
   <h1 style="margin:0 0 8px 0;font-size:24px;">每日财经新闻摘要</h1>
-  <p style="color:#666;">生成时间：{generated_at.strftime("%Y-%m-%d %H:%M %Z")}</p>
+  <p style="color:#666;">生成时间：{generated_label}</p>
+  {copy_strip}
   <div style="margin:16px 0 20px 0;padding:14px;border-radius:12px;background:#f3f4f6;">
     <p style="margin:0 0 10px 0;color:#374151;font-weight:700;">分类筛选 / 快速跳转</p>
     {category_nav}
@@ -668,6 +719,7 @@ def build_email_html(ai_summary: str, articles: list[Article], source_digest: st
   <p style="color:#666;">以下为按主题归类的重点卡片（优先摘要更完整、分析性更强的条目）。完整逐条素材清单在<strong>本邮件最底部</strong>灰色「原始素材清单」区块。</p>
   {article_sections}
   {secondary_digest}
+  {clipboard_html}
   <p style="color:#777;font-size:12px;">本邮件由自动化脚本生成，仅供信息整理，不构成投资建议。</p>
   </div>
 </div>
