@@ -1,0 +1,47 @@
+name: Daily Finance News Digest
+
+on:
+  schedule:
+    # GitHub cron uses UTC. The script checks America/Los_Angeles time
+    # and sends only when DIGEST_HOUR matches, so daylight saving is handled.
+    - cron: "5 * * * *"
+  workflow_dispatch:
+    inputs:
+      send_now:
+        description: "Send immediately instead of checking the configured hour"
+        required: false
+        type: boolean
+        default: true
+
+jobs:
+  send-digest:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Send daily digest
+        env:
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          TO_EMAIL: ${{ secrets.TO_EMAIL }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL: ${{ vars.OPENAI_MODEL || 'gpt-4o-mini' }}
+          DIGEST_TIMEZONE: ${{ vars.DIGEST_TIMEZONE || 'America/Los_Angeles' }}
+          DIGEST_HOUR: ${{ vars.DIGEST_HOUR || '11' }}
+          ARTICLES_PER_TOPIC: ${{ vars.ARTICLES_PER_TOPIC || '5' }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.send_now }}" = "true" ]; then
+            python main.py --send-now
+          else
+            python main.py --send-if-due
+          fi
