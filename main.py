@@ -264,8 +264,16 @@ def build_email_html(ai_summary: str, articles: list[Article]) -> str:
 
 def send_email(subject: str, html_body: str) -> None:
     gmail_user = env("GMAIL_USER")
-    gmail_app_password = env("GMAIL_APP_PASSWORD")
+    gmail_app_password = "".join(env("GMAIL_APP_PASSWORD").split())
     to_email = env("TO_EMAIL", gmail_user)
+
+    try:
+        gmail_app_password.encode("ascii")
+    except UnicodeEncodeError as exc:
+        raise RuntimeError(
+            "GMAIL_APP_PASSWORD must be the 16-character Gmail app password only. "
+            "Please remove any Chinese labels, punctuation, or extra copied text."
+        ) from exc
 
     message = EmailMessage()
     message["From"] = gmail_user
