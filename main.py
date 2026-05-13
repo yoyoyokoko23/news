@@ -205,6 +205,8 @@ def strip_html_to_plain(fragment: str) -> str:
 CLIPBOARD_FOLLOWUP_INSTRUCTION = """【接下来请你做的分析】
 请在我下面粘贴的「当日素材全文」基础上，用简单的语言说明当前市场与相关政策的趋势，并分析这些变化对我长期坚持定投（例如宽基指数基金、科创或行业主题等）可能有哪些影响。请注意：仅以教育和信息整理为目的，不构成任何投资建议；若存在多种可能，请分情形说明。
 
+在动笔前，请你先回到本封邮件摘要里，自行判断哪些属于「重点新闻」，并逐条打开对应原文（邮件内彩色卡片或清单中的「阅读全文」链接），通读全文后再做分析与归纳；不要仅凭下方摘录、标题或摘要下结论。
+
 === 以下为当日素材全文（请连同本段说明一并复制到 ChatGPT、Cursor 等工具后继续提问）==="""
 
 
@@ -240,7 +242,7 @@ def build_clipboard_region_html(plain_text: str) -> str:
 <a id="digest-clipboard-anchor" name="digest-clipboard-anchor" style="display:block;line-height:0;font-size:0;">&nbsp;</a>
 <section style="margin-top:28px;padding:18px;border-radius:12px;border:1px solid #cbd5e1;background:#f1f5f9;">
   <h2 style="margin:0 0 8px 0;font-size:17px;color:#0f172a;">全文复制区</h2>
-  <p style="margin:0 0 14px 0;font-size:13px;color:#475569;line-height:1.55;">已包含给 AI 的定投分析提示与当日全部纯文本素材（含链接，与邮件内素材清单一致）。若单击无法一次选中，请在框内三击或手动拖选全段后再复制。</p>
+  <p style="margin:0 0 14px 0;font-size:13px;color:#475569;line-height:1.55;">已包含给 AI 的定投分析提示与当日全部纯文本素材；其中已要求分析方须回到本邮件中打开重点新闻<strong>原文全文</strong>后再作答。若单击无法一次选中，请在框内三击或手动拖选全段后再复制。</p>
   <div style="-webkit-user-select:all;-moz-user-select:all;-ms-user-select:all;user-select:all;border:1px solid #e2e8f0;border-radius:10px;background:#ffffff;padding:14px;max-height:520px;overflow:auto;">
     <pre style="margin:0;white-space:pre-wrap;word-break:break-word;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;line-height:1.45;color:#1e293b;">{escaped}</pre>
   </div>
