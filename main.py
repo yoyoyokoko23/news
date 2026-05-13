@@ -202,6 +202,18 @@ def strip_html_to_plain(fragment: str) -> str:
     return " ".join(html.unescape(without_tags).split())
 
 
+def plain_text_clipboard_remove_links(text: str) -> str:
+    """Strip URLs and per-article link lines for the email「全文复制区」only."""
+    if not text:
+        return ""
+    out = re.sub(r"^\s*链接[:：]\s*[^\n]+\n?", "", text, flags=re.MULTILINE)
+    out = re.sub(r"https?://[^\s\]\)<>\"']+", "", out)
+    out = re.sub(r"\bwww\.[^\s\]\)<>\"']+", "", out)
+    out = re.sub(r"[ \t]{2,}", " ", out)
+    out = re.sub(r"\n{3,}", "\n\n", out)
+    return out.strip()
+
+
 CLIPBOARD_FOLLOWUP_INSTRUCTION = """【接下来请你做的分析】
 请在我下面粘贴的「当日素材全文」基础上，用简单的语言说明当前市场与相关政策的趋势，并分析这些变化对我长期坚持定投（例如宽基指数基金、科创或行业主题等）可能有哪些影响。请注意：仅以教育和信息整理为目的，不构成任何投资建议；若存在多种可能，请分情形说明。
 
@@ -209,17 +221,20 @@ CLIPBOARD_FOLLOWUP_INSTRUCTION = """【接下来请你做的分析】
 
 
 def build_plain_text_for_clipboard(ai_summary_html: str, source_digest: str, generated_label: str) -> str:
-    plain_ai = strip_html_to_plain(ai_summary_html)
+    plain_ai = plain_text_clipboard_remove_links(strip_html_to_plain(ai_summary_html))
+    digest_no_links = plain_text_clipboard_remove_links(source_digest)
     parts = [
         CLIPBOARD_FOLLOWUP_INSTRUCTION,
         "",
         f"生成时间：{generated_label}",
         "",
+        "（本复制区已去除全部网址；原文链接见邮件内彩色卡片「阅读全文」。）",
+        "",
         "--- AI 摘要（纯文本）---",
         plain_ai if plain_ai else "（无）",
         "",
-        "--- 行情与新闻素材（与邮件内清单一致）---",
-        source_digest,
+        "--- 行情与新闻素材（无链接版，与邮件内清单对应）---",
+        digest_no_links,
     ]
     return "\n".join(parts)
 
@@ -240,7 +255,7 @@ def build_clipboard_region_html(plain_text: str) -> str:
 <a id="digest-clipboard-anchor" name="digest-clipboard-anchor" style="display:block;line-height:0;font-size:0;">&nbsp;</a>
 <section style="margin-top:28px;padding:18px;border-radius:12px;border:1px solid #cbd5e1;background:#f1f5f9;">
   <h2 style="margin:0 0 8px 0;font-size:17px;color:#0f172a;">全文复制区</h2>
-  <p style="margin:0 0 14px 0;font-size:13px;color:#475569;line-height:1.55;">已包含给 AI 的定投分析提示与当日全部纯文本素材。若单击无法一次选中，请在框内三击或手动拖选全段后再复制。</p>
+  <p style="margin:0 0 14px 0;font-size:13px;color:#475569;line-height:1.55;">已包含给 AI 的定投分析提示与当日全部纯文本素材（<strong>不含网址</strong>，避免复制到 AI 时满屏链接）。若单击无法一次选中，请在框内三击或手动拖选全段后再复制。</p>
   <div style="-webkit-user-select:all;-moz-user-select:all;-ms-user-select:all;user-select:all;border:1px solid #e2e8f0;border-radius:10px;background:#ffffff;padding:14px;max-height:520px;overflow:auto;">
     <pre style="margin:0;white-space:pre-wrap;word-break:break-word;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;line-height:1.45;color:#1e293b;">{escaped}</pre>
   </div>
